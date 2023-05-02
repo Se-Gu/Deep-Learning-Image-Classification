@@ -8,7 +8,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 from tensorflow.keras.metrics import Precision, Recall
-
+import copy
 
 # Load CIFAR-100 dataset
 (x_train, y_train), (x_test, y_test) = cifar100.load_data(label_mode='fine')
@@ -77,7 +77,7 @@ model.compile(loss='categorical_crossentropy',
 
 # Set the batch size and number of epochs
 batch_size = 64
-epochs = 20
+epochs = 1
 
 # Train the model on the training set
 history = model.fit(x_train, y_train,
@@ -103,3 +103,172 @@ print('Validation loss:', scores[0])
 print('Validation accuracy:', scores[1])
 print('Validation precision:', precision)
 print('Validation recall:', recall)
+
+# Define the ablation study configurations
+configurations = [
+    {'name': 'no_dropouts', 'layers': ['DROPOUT', 'DROPOUT_1', 'DROPOUT_2']},
+    {'name': 'no_second_dropout', 'layers': ['DROPOUT_1']},
+    {'name': 'half_filters', 'filters_factor': 0.5, 'layers': []},
+    {'name': 'double_filters', 'filters_factor': 2.0, 'layers': []},
+    {'name': 'half_dense_units', 'dense_units_factor': 0.5, 'layers': []},
+    {'name': 'double_dense_units', 'dense_units_factor': 2.0, 'layers': [] },
+]
+
+# Perform ablation study
+for config in configurations:
+    print(f"Ablation study: {config['name']}")
+
+    # Create a copy of the original model
+    modified_model = Sequential.from_config(model.get_config())
+
+    # Iterate over the layers of the model and modify them according to the current configuration
+    for layer_index, layer in enumerate(modified_model.layers):
+        if layer.name in config['layers']:
+            if isinstance(layer, Dropout):
+                modified_model.layers[layer_index] = Dense(layer.units, activation=layer.activation)
+            else:
+                modified_model.layers[layer_index] = None
+        elif isinstance(layer, Conv2D):
+            modified_model.layers[layer_index] = Conv2D(int(layer.filters * config.get('filters_factor', 1.0)),
+                                                        layer.kernel_size,
+                                                        padding=layer.padding,
+                                                        activation=layer.activation)
+        elif isinstance(layer, Dense):
+            modified_model.layers[layer_index] = Dense(int(layer.units * config.get('dense_units_factor', 1.0)),
+                                                       activation=layer.activation)
+
+    # Remove None layers from the model
+    modified_model = Sequential([layer for layer in modified_model.layers if layer is not None])
+
+    # Compile the modified model
+    modified_model.compile(loss='categorical_crossentropy',
+                            optimizer=Adam(learning_rate=0.001),
+                            metrics=['accuracy', Precision(name='precision'), Recall(name='recall')])
+
+    # Train the modified model
+    history = modified_model.fit(datagen_train.flow(x_train, y_train, batch_size=batch_size),
+                                  epochs=epochs,
+                                  validation_data=(x_val, y_val),
+                                  verbose=1)
+
+    # Evaluate the modified model
+    scores = modified_model.evaluate(x_val, y_val, verbose=1)
+    y_pred = modified_model.predict(x_val)
+    y_pred_classes = np.argmax(y_pred, axis=1)
+    y_true = np.argmax(y_val, axis=1)
+    accuracy = accuracy_score(y_true, y_pred_classes)
+    precision = precision_score(y_true, y_pred_classes, average='weighted')
+    recall = recall_score(y_true, y_pred_classes, average='weighted')
+
+    # Print the results of the ablation study
+    print('Validation loss:', scores[0])
+    print('Validation accuracy:', scores[1])
+    print('Validation precision:', precision)
+    print('Validation recall:', recall)
+    print()
+
+# Define ablation study components to remove or modify
+components = {
+    'dropout': [0.0, 0.25, 0.5],
+    'number of filters': [16, 32, 64],
+    'kernel size': [(3, 3), (5, 5)],
+    'learning rate': [0.01, 0.001, 0.0001],
+    'optimizer': ['Adam', 'SGD']
+}
+
+# Perform ablation study
+results = {}
+
+for component, values in components.items():
+    for value in values:
+        print('Evaluating model with', component, '=', value)
+
+        if component == 'dropout':
+            model = Sequential()
+
+            model.add(Conv2D(32, (3, 3), padding='same', activation='relu', input_shape=x_train.shape[1:]))
+            model.add(Conv2D(32, (3, 3), activation='relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            model.add(Dropout(value))
+
+            model.add(Conv2D(64, (3, 3), padding='same', activation='relu'))
+            model.add(Conv2D(64, (3, 3), activation='relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            model.add(Dropout(value))
+
+            model.add(Flatten())
+            model.add(Dense(512, activation='relu'))
+            model.add(Dropout(value))
+            model.add(Dense(num_classes, activation='softmax'))
+
+        elif component == 'number of filters':
+            model = Sequential()
+
+            model.add(Conv2D(value, (3, 3), padding='same', activation='relu', input_shape=x_train.shape[1:]))
+            model.add(Conv2D(value, (3, 3), activation='relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            model.add(Dropout(0.25))
+
+            model.add(Conv2D(value * 2, (3, 3), padding='same', activation='relu'))
+            model.add(Conv2D(value * 2, (3, 3), activation='relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            model.add(Dropout(0.25))
+
+            model.add(Flatten())
+            model.add(Dense(512, activation='relu'))
+            model.add(Dropout(0.5))
+            model.add(Dense(num_classes, activation='softmax'))
+
+        elif component == 'kernel size':
+            model = Sequential()
+
+            model.add(Conv2D(32, value, padding='same', activation='relu', input_shape=x_train.shape[1:]))
+            model.add(Conv2D(32, value, activation='relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            model.add(Dropout(0.25))
+
+            model.add(Conv2D(64, value, padding='same', activation='relu'))
+            model.add(Conv2D(64, value, activation='relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            model.add(Dropout(0.25))
+
+            model.add(Flatten())
+            model.add(Dense(512, activation='relu'))
+            model.add(Dropout(0.5))
+            model.add(Dense(num_classes, activation='softmax'))
+
+        elif component == 'learning rate':
+            model = Sequential()
+
+            model.add(Conv2D(32, value, padding='same', activation='relu', input_shape=x_train.shape[1:]))
+            model.add(Conv2D(32, value, activation='relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            model.add(Dropout(0.25))
+
+            model.add(Conv2D(64, value, padding='same', activation='relu'))
+            model.add(Conv2D(64, value, activation='relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            model.add(Dropout(0.25))
+
+            model.add(Flatten())
+            model.add(Dense(512, activation='relu'))
+            model.add(Dropout(0.5))
+            model.add(Dense(num_classes, activation='softmax'))
+
+        elif component == 'optimizer':
+            model = Sequential()
+
+            model.add(Conv2D(32, value, padding='same', activation='relu', input_shape=x_train.shape[1:]))
+            model.add(Conv2D(32, value, activation='relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            model.add(Dropout(0.25))
+
+            model.add(Conv2D(64, value, padding='same', activation='relu'))
+            model.add(Conv2D(64, value, activation='relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            model.add(Dropout(0.25))
+
+            model.add(Flatten())
+            model.add(Dense(512, activation='relu'))
+            model.add(Dropout(0.5))
+            model.add(Dense(num_classes, activation='softmax'))
