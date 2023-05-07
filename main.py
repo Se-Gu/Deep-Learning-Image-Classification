@@ -10,6 +10,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score
 from tensorflow.keras.metrics import Precision, Recall
 import copy
 
+
 # Load CIFAR-100 dataset
 (x_train, y_train), (x_test, y_test) = cifar100.load_data(label_mode='fine')
 
@@ -104,6 +105,7 @@ print('Validation accuracy:', scores[1])
 print('Validation precision:', precision)
 print('Validation recall:', recall)
 
+
 # Define the ablation study configurations
 configurations = [
     {'name': 'no_dropouts', 'layers': ['DROPOUT', 'DROPOUT_1', 'DROPOUT_2']},
@@ -167,108 +169,90 @@ for config in configurations:
     print('Validation recall:', recall)
     print()
 
-# Define ablation study components to remove or modify
-components = {
-    'dropout': [0.0, 0.25, 0.5],
-    'number of filters': [16, 32, 64],
-    'kernel size': [(3, 3), (5, 5)],
-    'learning rate': [0.01, 0.001, 0.0001],
-    'optimizer': ['Adam', 'SGD']
-}
+# # Load CIFAR-100 dataset
+# (x_train, y_train), (x_test, y_test) = cifar100.load_data(label_mode='fine')
+#
+# # Normalize pixel values to [0, 1]
+# x_train = x_train.astype('float32') / 255.0
+# x_test = x_test.astype('float32') / 255.0
+#
+# # Convert labels to one-hot encoding
+# num_classes = 100
+# y_train = to_categorical(y_train, num_classes)
+# y_test = to_categorical(y_test, num_classes)
 
-# Perform ablation study
-results = {}
+# Combine training and validation sets
+x_train_combined = np.concatenate((x_train, x_val), axis=0)
+y_train_combined = np.concatenate((y_train, y_val), axis=0)
 
-for component, values in components.items():
-    for value in values:
-        print('Evaluating model with', component, '=', value)
+# Define the model architecture
+model = Sequential()
 
-        if component == 'dropout':
-            model = Sequential()
+model.add(Conv2D(32, (3, 3), padding='same', activation='relu', input_shape=x_train.shape[1:]))
+model.add(Conv2D(32, (3, 3), activation='relu'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+model.add(Dropout(0.25))
 
-            model.add(Conv2D(32, (3, 3), padding='same', activation='relu', input_shape=x_train.shape[1:]))
-            model.add(Conv2D(32, (3, 3), activation='relu'))
-            model.add(MaxPooling2D(pool_size=(2, 2)))
-            model.add(Dropout(value))
+model.add(Conv2D(64, (3, 3), padding='same', activation='relu'))
+model.add(Conv2D(64, (3, 3), activation='relu'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+model.add(Dropout(0.25))
 
-            model.add(Conv2D(64, (3, 3), padding='same', activation='relu'))
-            model.add(Conv2D(64, (3, 3), activation='relu'))
-            model.add(MaxPooling2D(pool_size=(2, 2)))
-            model.add(Dropout(value))
+model.add(Flatten())
+model.add(Dense(512, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(num_classes, activation='softmax'))
 
-            model.add(Flatten())
-            model.add(Dense(512, activation='relu'))
-            model.add(Dropout(value))
-            model.add(Dense(num_classes, activation='softmax'))
+# Print the model summary
+model.summary()
 
-        elif component == 'number of filters':
-            model = Sequential()
+# Compile the model with a categorical cross-entropy loss function and Adam optimizer
+model.compile(loss='categorical_crossentropy',
+              optimizer=Adam(learning_rate=0.001),
+              metrics=['accuracy', Precision(name='precision'), Recall(name='recall')])
 
-            model.add(Conv2D(value, (3, 3), padding='same', activation='relu', input_shape=x_train.shape[1:]))
-            model.add(Conv2D(value, (3, 3), activation='relu'))
-            model.add(MaxPooling2D(pool_size=(2, 2)))
-            model.add(Dropout(0.25))
+# Set the batch size and number of epochs
+batch_size = 64
+epochs = 10
 
-            model.add(Conv2D(value * 2, (3, 3), padding='same', activation='relu'))
-            model.add(Conv2D(value * 2, (3, 3), activation='relu'))
-            model.add(MaxPooling2D(pool_size=(2, 2)))
-            model.add(Dropout(0.25))
+# Train the model on the combined training and validation sets
+history = model.fit(x_train_combined, y_train_combined,
+                    batch_size=batch_size,
+                    epochs=epochs,
+                    validation_data=(x_test, y_test),
+                    verbose=1)
 
-            model.add(Flatten())
-            model.add(Dense(512, activation='relu'))
-            model.add(Dropout(0.5))
-            model.add(Dense(num_classes, activation='softmax'))
+# Evaluate the model on the test set
+scores = model.evaluate(x_test, y_test, verbose=1)
+y_pred = model.predict(x_test)
+y_pred_classes = np.argmax(y_pred, axis=1)
+y_true = np.argmax(y_test, axis=1)
 
-        elif component == 'kernel size':
-            model = Sequential()
+# Calculate the evaluation metrics
+accuracy = accuracy_score(y_true, y_pred_classes)
+precision = precision_score(y_true, y_pred_classes, average='weighted')
+recall = recall_score(y_true, y_pred_classes, average='weighted')
 
-            model.add(Conv2D(32, value, padding='same', activation='relu', input_shape=x_train.shape[1:]))
-            model.add(Conv2D(32, value, activation='relu'))
-            model.add(MaxPooling2D(pool_size=(2, 2)))
-            model.add(Dropout(0.25))
+# Print the evaluation results
+print('Test loss:', scores[0])
+print('Test accuracy:', scores[1])
+print('Test precision:', precision)
+print('Test recall:', recall)
 
-            model.add(Conv2D(64, value, padding='same', activation='relu'))
-            model.add(Conv2D(64, value, activation='relu'))
-            model.add(MaxPooling2D(pool_size=(2, 2)))
-            model.add(Dropout(0.25))
 
-            model.add(Flatten())
-            model.add(Dense(512, activation='relu'))
-            model.add(Dropout(0.5))
-            model.add(Dense(num_classes, activation='softmax'))
+# Evaluate the model on the test set
+scores = model.evaluate(x_test, y_test, verbose=1)
+y_pred = model.predict(x_test)
+y_pred_classes = np.argmax(y_pred, axis=1)
+y_true = np.argmax(y_test, axis=1)
 
-        elif component == 'learning rate':
-            model = Sequential()
+# Calculate the evaluation metrics
+accuracy = accuracy_score(y_true, y_pred_classes)
+precision = precision_score(y_true, y_pred_classes, average='weighted')
+recall = recall_score(y_true, y_pred_classes, average='weighted')
 
-            model.add(Conv2D(32, value, padding='same', activation='relu', input_shape=x_train.shape[1:]))
-            model.add(Conv2D(32, value, activation='relu'))
-            model.add(MaxPooling2D(pool_size=(2, 2)))
-            model.add(Dropout(0.25))
-
-            model.add(Conv2D(64, value, padding='same', activation='relu'))
-            model.add(Conv2D(64, value, activation='relu'))
-            model.add(MaxPooling2D(pool_size=(2, 2)))
-            model.add(Dropout(0.25))
-
-            model.add(Flatten())
-            model.add(Dense(512, activation='relu'))
-            model.add(Dropout(0.5))
-            model.add(Dense(num_classes, activation='softmax'))
-
-        elif component == 'optimizer':
-            model = Sequential()
-
-            model.add(Conv2D(32, value, padding='same', activation='relu', input_shape=x_train.shape[1:]))
-            model.add(Conv2D(32, value, activation='relu'))
-            model.add(MaxPooling2D(pool_size=(2, 2)))
-            model.add(Dropout(0.25))
-
-            model.add(Conv2D(64, value, padding='same', activation='relu'))
-            model.add(Conv2D(64, value, activation='relu'))
-            model.add(MaxPooling2D(pool_size=(2, 2)))
-            model.add(Dropout(0.25))
-
-            model.add(Flatten())
-            model.add(Dense(512, activation='relu'))
-            model.add(Dropout(0.5))
-            model.add(Dense(num_classes, activation='softmax'))
+# Print the evaluation results
+print('Test loss:', scores[0])
+print('Test accuracy:', scores[1])
+print('Test precision:', precision)
+print('Test recall:', recall)
